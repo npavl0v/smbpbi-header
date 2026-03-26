@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <getopt.h>
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
@@ -1000,7 +1001,7 @@ void pretty_print(uint64_t mask)
 			printf("----------------SENSORS-----------------\n");
 			printf("GPU Temp: %.1f C\n", pretty_temp(gpu_info[k].temp));
 
-			printf("GPU Power: %d W\n", pretty_power(gpu_info[k].power)); // kW to W*/
+			printf("GPU Power: %d W\n", pretty_power(gpu_info[k].power)); // kW to W
 
 			printf("--------------PCIE_LINK_INFO---------------\n");
 			
@@ -1020,16 +1021,117 @@ void pretty_print(uint64_t mask)
 	printf("=======================================\n");
 }
 
-int main()
+void OUTPUT_vbios(uint64_t mask, int do_pure, int ord)
 {
+	for (int i = 0, k = 0; i < sizeof(mask) * 8; i++) 
+	{
+		if ((1ULL << i) & mask && (k == ord))
+		{
+			!do_pure && printf("VBIOS Version: ");
+
+			for (int j = 0; j < NV_MSGBOX_SYSID_DATA_SIZE_FIRMWARE_VER_V1; j++) 
+			{
+				printf("%c", gpu_info[k].fwversion[j]);
+			}
+			printf("\n");
+		}
+	}
+}
+
+void oneshot_cmd(const char* arg1, int do_pure, int ord, uint64_t nvidia_mask) 
+{
+	if (strcmp("vbios", arg1) == 0)
+	{
+		cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_FIRMWARE_VER_V1);
+		OUTPUT_vbios(nvidia_mask, do_pure, ord);
+	}
+}
+
+void usage(const char* progname);
+
+int main(int argc, char* argv[])
+{
+	int do_count = 0;
+	int do_pure = 0;
+
+	int do_cmd = 0;
+	char cmd[16] = {};
+
+	int ord = 0;
+
+	int opt = 0;
+	struct option long_options[] = 
+	{
+		{"detect", no_argument, 0, 'd'},
+		{"pure", no_argument, 0, 'p'},
+		{"cmd", required_argument, 0, 'c'},
+		{"ord", required_argument, 0, 'o'},
+		{"help", no_argument, 0, 'h'},
+		{0, 0, 0, 0,}
+	};
+
+	while ((opt = getopt_long(argc, argv, "dpc:o:", long_options, NULL))  != -1)
+	{
+		switch (opt) 
+		{
+			case 'd':
+				do_count = 1;
+				break;
+			case 'p':
+				do_pure = 1;
+				break;
+			case 'c':
+				do_cmd = 1;
+
+				if (strlen(optarg) >= sizeof(cmd))
+					exit(1);
+
+				strcpy(cmd, optarg);
+
+				break;
+			case 'o':
+				ord = strtol(optarg, NULL, 10);	
+				ord--;
+				if (ord < 0)
+					ord = 0;
+				break;
+			case 'h':
+				usage(argv[0]);
+				break;
+		}
+	}
+
 	uint64_t nvidia_mask = detect_nvidia_device();
 
-	if (!nvidia_mask)
+	if (do_count)
 	{
-		printf("NVIDIA devices not found\n");
-		return 0;
-	} 
+		int count = 0;
+		for (int i = 0; i < sizeof(uint64_t) * 8; i++)
+		{
+			if ((1ULL << i) & nvidia_mask) 
+			{
+				count++;	
+			}
+		}
 
+		if (do_pure)
+		{
+			printf("%d", count);
+			exit(0);
+		}
+
+		printf("Find %d NVIDIA device(s)\n", count);
+		exit(0);
+	}
+	
+	if (do_cmd) 
+	{
+		oneshot_cmd(cmd, do_pure, ord, nvidia_mask);	
+		exit(0);
+	}
+
+
+	/*
 	// SYS_INFO
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_FIRMWARE_VER_V1);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_BOARD_PART_NUM_V1);
@@ -1063,7 +1165,27 @@ int main()
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9);
 
-	pretty_print(nvidia_mask);
+	pretty_print(nvidia_mask);*/
 
 	return 0;
+}
+
+void usage(const char *progname)
+{
+	printf("Usage: %s [OPTIONS]\n", progname);
+	printf("NVIDIA GPU SMBPBI Monitor Tool\n\n");
+	printf("Options:\n");
+	printf("  -d, --detect              Detect NVIDIA GPUs and show count\n");
+	printf("  -p, --pure                Output only numeric value (for scripting)\n");
+	printf("  -c, --cmd CMD             Execute one-shot command\n");
+	printf("  -o, --ord N               GPU index (1-based) for command\n");
+	printf("  -h, --help                Show this help\n\n");
+	printf("Commands for --cmd:\n");
+	printf("  vbios                   Read VBIOS version\n");
+	printf("Examples:\n");
+	printf("  %s --detect\n", progname);
+	printf("  %s --detect --pure\n", progname);
+	printf("  %s --cmd vbios -o 1\n", progname);
+	printf("  %s -c vbios -p\n", progname);
+	printf("  %s -c vbios -o 1\n", progname);
 }
