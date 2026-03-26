@@ -24,7 +24,7 @@
 #ifndef _SMBPBI_H
 #define _SMBPBI_H
 
-#include "oob/smbpbi_impl.h"
+#include "smbpbi_impl.h"
 
 /*!
  * This file contains definitions for SMBPBI - SMBUS Out-Of-Band (OOB) interface
