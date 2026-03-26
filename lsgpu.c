@@ -18,6 +18,8 @@
 #define DEF_BUF_SIZE 32
 #define DEF_COPY_SZ 4
 
+#define DWORD_SZ 4
+
 #define NVIDIA_FWVERSION_LEN 16
 
 #define VENDOR_ID_LEN 2
@@ -35,13 +37,12 @@
 
 // TYPE SIZE LENGTHS
 #define SIZE_24I8F 4
-#define POWER_SIZE 2
 
 struct GpuInfo
 {
 	uint8_t fwversion[NV_MSGBOX_SYSID_DATA_SIZE_FIRMWARE_VER_V1];
 	uint8_t temp[SIZE_24I8F];
-	uint8_t power[POWER_SIZE];
+	uint8_t power[DWORD_SZ];
 	uint8_t board_part_number[NV_MSGBOX_SYSID_DATA_SIZE_BOARD_PART_NUM_V1];
 	uint8_t serial_number[NV_MSGBOX_SYSID_DATA_SIZE_SERIAL_NUM_V1];
 	uint8_t marketing_name[NV_MSGBOX_SYSID_DATA_SIZE_MARKETING_NAME_V1];
@@ -58,19 +59,17 @@ struct GpuInfo
 	uint8_t fru_part_number[NV_MSGBOX_SYSID_DATA_SIZE_FRU_PART_NUMBER_V1];
 	uint8_t gpu_part_number[NV_MSGBOX_SYSID_DATA_SIZE_GPU_PART_NUM_V1];
 	uint8_t max_dram_capacity[NV_MSGBOX_SYSID_DATA_SIZE_MAX_DRAM_CAPACITY_V1];
-
-
-
-
+	uint8_t pcie_link_info_0[DWORD_SZ];
+	uint8_t pcie_link_info_1[DWORD_SZ];
+	uint8_t pcie_link_info_2[DWORD_SZ];
+	uint8_t pcie_link_info_3[DWORD_SZ];
+	uint8_t pcie_link_info_4[DWORD_SZ];
+	uint8_t pcie_link_info_6[DWORD_SZ];
+	uint8_t pcie_link_info_8[DWORD_SZ];
+	uint8_t pcie_link_info_9[DWORD_SZ];
 };
 
 struct GpuInfo gpu_info[MAX_GPUS];
-
-struct SmbpbiToGpuInfo 
-{
-	uint8_t cmd;
-	struct GpuInfo gpu_info;
-};
 
 double convert_24i8f_to_double(uint32_t val)
 {
@@ -294,42 +293,6 @@ int get_smbpbi_data(const char* dev, uint8_t opcode, uint8_t arg1, uint8_t arg2,
 	return 0;
 }
 
-int get_nvidia_fwversion(uint64_t mask)
-{
-	char bus[32] = {};
-	uint8_t recv_buf[] = {0x0, 0x0, 0x0, 0x0, 0x0};
-
-	for (int i = 0, k = 0; i < sizeof(mask) * 8; i++) 
-	{
-		if ((1ULL << i) & mask)
-		{
-			snprintf(bus, 32, "/dev/i2c-%d", i);
-			for (int j = 0, arg2 = 0; j < NV_MSGBOX_SYSID_DATA_SIZE_FIRMWARE_VER_V1; j += DEF_COPY_SZ, arg2++) 
-			{
-				if (get_smbpbi_data(bus, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA,
-						     NV_MSGBOX_CMD_ARG1_FIRMWARE_VER_V1, arg2,
-						     STATUS_GOOD, recv_buf, SMBPBI_GET_LEN) == -1)
-					return -1;
-
-				uint8_t is_last_transaction = ((j + DEF_COPY_SZ) > NV_MSGBOX_SYSID_DATA_SIZE_FIRMWARE_VER_V1);
-				if (is_last_transaction)
-				{
-					memcpy(&(gpu_info[k].fwversion[j]), 
-					       &recv_buf[1], 
-					       NV_MSGBOX_SYSID_DATA_SIZE_FIRMWARE_VER_V1 - j);
-					break;
-				}
-
-				memcpy(&(gpu_info[k].fwversion[j]), &recv_buf[1], DEF_COPY_SZ);
-				
-			}
-
-			k++;
-		}
-	}	
-
-}
-
 uint8_t* get_ptr_to_field(uint8_t cmd, uint8_t arg1, int gpu_info_index, int field_index);
 
 int smbpbi_cmd(uint64_t mask, uint8_t opcode, uint8_t arg1, uint8_t type_size)
@@ -372,6 +335,7 @@ uint8_t* get_ptr_to_field(uint8_t cmd, uint8_t arg1, int gpu_info_index, int fie
 {
 	switch (cmd)
 	{
+		// SYS_INFO
 		case NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA:
 			switch (arg1) 
 			{
@@ -442,9 +406,10 @@ uint8_t* get_ptr_to_field(uint8_t cmd, uint8_t arg1, int gpu_info_index, int fie
 				case NV_MSGBOX_CMD_ARG1_MAX_DRAM_CAPACITY_V1:
 					return &(gpu_info[gpu_info_index].max_dram_capacity[field_index]);
 					break;
-			};
+			}
 			break;
 
+		// SENSORS
 		case NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP:
 			return &(gpu_info[gpu_info_index].temp[field_index]);
 			break;
@@ -452,7 +417,38 @@ uint8_t* get_ptr_to_field(uint8_t cmd, uint8_t arg1, int gpu_info_index, int fie
 		case NV_MSGBOX_CMD_OPCODE_GET_POWER:
 			return &(gpu_info[gpu_info_index].power[field_index]);
 			break;
-	};
+
+		// PCIE_LINK_INFO
+		case NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO:
+			switch (arg1) 
+			{
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0:
+					return &(gpu_info[gpu_info_index].pcie_link_info_0[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1:
+					return &(gpu_info[gpu_info_index].pcie_link_info_1[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2:
+					return &(gpu_info[gpu_info_index].pcie_link_info_2[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3:
+					return &(gpu_info[gpu_info_index].pcie_link_info_3[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4:
+					return &(gpu_info[gpu_info_index].pcie_link_info_4[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6:
+					return &(gpu_info[gpu_info_index].pcie_link_info_6[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8:
+					return &(gpu_info[gpu_info_index].pcie_link_info_8[field_index]);
+					break;
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9:
+					return &(gpu_info[gpu_info_index].pcie_link_info_9[field_index]);
+					break;
+			}
+			break;
+	}
 }
 
 
@@ -460,6 +456,7 @@ void cmd(uint64_t nvidia_mask, uint8_t cmd, uint8_t arg1)
 {
 	switch (cmd)
 	{
+		// SYS_INFO
 		case NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA:
 			switch (arg1)
 			{
@@ -585,6 +582,7 @@ void cmd(uint64_t nvidia_mask, uint8_t cmd, uint8_t arg1)
 			}
 			break;
 
+		// SENSORS
 		case NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP:
 			smbpbi_cmd(nvidia_mask, 
 				   NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP, 
@@ -596,10 +594,72 @@ void cmd(uint64_t nvidia_mask, uint8_t cmd, uint8_t arg1)
 			smbpbi_cmd(nvidia_mask, 
 				   NV_MSGBOX_CMD_OPCODE_GET_POWER, 
 				   NV_MSGBOX_CMD_ARG1_NULL, 
-				   POWER_SIZE);
+				   DWORD_SZ);
 			break;
 
-	};
+		// PCIE_LINK_INFO
+		case NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO:
+			switch (arg1)
+			{
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0: 
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8, 
+				   	   	   DWORD_SZ);
+				break;
+
+				case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9:
+					smbpbi_cmd(nvidia_mask, 
+						   NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, 
+				   	   	   NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9, 
+				   	   	   DWORD_SZ);
+				break;
+
+			}
+			break;
+	}
 }
 
 double pretty_temp(uint8_t* ptr)
@@ -618,8 +678,8 @@ int pretty_power(uint8_t* ptr)
 	if (!ptr)
 		return -1;
 
-	uint16_t val = 0;
-	memcpy(&val, ptr, sizeof(uint16_t));
+	uint32_t val = 0;
+	memcpy(&val, ptr, DWORD_SZ);
 
 	return val / 1000; // kW to W
 }
@@ -634,6 +694,222 @@ int pretty_pcie_speed(uint8_t* ptr)
 	return pcie_speed;
 }
 
+void print_pcie_link_info(uint8_t arg1, uint32_t raw)
+{
+        switch (arg1)
+        {
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0: 
+		{
+			uint8_t link_speed = (raw & 0x7);
+			switch (link_speed)
+			{
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_UNKNOWN:
+					printf("Link Speed: Unknown\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_2500_MTPS:
+					printf("Link Speed: 2500 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_5000_MTPS:
+					printf("Link Speed: 5000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_8000_MTPS:
+					printf("Link Speed: 8000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_16000_MTPS:
+					printf("Link Speed: 16000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_SPEED_32000_MTPS:
+					printf("Link Speed: 32000 MTPS\n");
+					break;
+			}
+
+			uint8_t link_width = ((raw  >> 4) & 0x7);
+			switch (link_width)
+			{
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_UNKNOWN:
+					printf("Link Width: Unknown\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X1:
+					printf("Link Width: X1\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X2:
+					printf("Link Width: X2\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X4:
+					printf("Link Width: X4\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X8:
+					printf("Link Width: X8\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X16:
+					printf("Link Width: X16\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_0_LINK_WIDTH_X32:
+					printf("Link Width: X32\n");
+					break;
+			}
+
+			uint8_t nonfatal_error_count = ((raw >> 8) & 0xFF);
+			printf("Nonfatal Error Count: %d\n", nonfatal_error_count);
+
+			uint8_t fatal_error_count = ((raw >> 16) & 0xFF);
+			printf("Fatal Error Count: %d\n", fatal_error_count);
+
+			uint8_t unsup_req_count = ((raw >> 24) & 0xFF);
+			printf("Unsupported Req Count: %d\n", unsup_req_count);
+			
+                        break;
+		}
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1:
+			printf("PCIe L0 To Recovery count: %u\n", raw);
+                        break;
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2:
+		{
+			uint16_t replay = (raw & 0x0000FFFF);
+			uint16_t naks = ((raw >> 16) & 0x0000FFFF);
+			printf("PCIe Replay Count: %u\n", replay);
+			printf("PCIe NAK Count: %u\n", naks);
+                        break;
+		}
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3:
+		{
+			uint8_t target_link_speed = (raw & 0x7);
+			switch (target_link_speed)
+			{
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_UNKNOWN:
+					printf("Target Link Speed: Unknown\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_2500_MTPS:
+					printf("Target Link Speed: 2500 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_5000_MTPS:
+					printf("Target Link Speed: 5000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_8000_MTPS:
+					printf("Target Link Speed: 8000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_16000_MTPS:
+					printf("Target Link Speed: 16000 MTPS\n");
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_3_TARGET_LINK_SPEED_32000_MTPS:
+					printf("Target Link Speed: 32000 MTPS\n");
+					break;
+			}
+
+                        break;
+		}
+
+
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4:
+			printf("TX Count: %u\n", raw);
+                        break;
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6:
+		{
+			uint8_t ltssm_curr_state = (raw & 0x1F);
+			const char* msg_prefix = "LTSSM Current State";
+			switch (ltssm_curr_state)
+			{
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_DETECT:
+					printf("%s: Detect\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_POLLING:
+					printf("%s: Polling\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_CONFIGURATION:
+					printf("%s: Configuration\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_RECOVERY:
+					printf("%s: Recovery\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_RECOVERY_EQZN:
+					printf("%s: Recovery EQZN\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L0:
+					printf("%s: L0\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L0S:
+					printf("%s: L0S\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L1_PLL_PD:
+					printf("%s: L1 PLL PD\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L2:
+					printf("%s: L2\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L1_CPM:
+					printf("%s: L1 CPM\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L1_1:
+					printf("%s: L1 1\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_L1_2:
+					printf("%s: L1 2\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_HOT_RESET:
+					printf("%s: Hot Reset\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_LOOPBACK:
+					printf("%s: Loopback\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_DISABLED:
+					printf("%s: Disabled\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_LINK_DOWN:
+					printf("%s: Link Down\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_LINK_READY:
+					printf("%s: Link Ready\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_LANES_IN_SLEEP:
+					printf("%s: Lanes In Speed\n", msg_prefix);
+					break;
+				case NV_MSGBOX_DATA_PCIE_LINK_INFO_PAGE_6_LTSSM_STATE_ILLEGAL:
+					printf("%s: Illegal\n", msg_prefix);
+					break;
+			}
+
+                        break;
+		}
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8:
+		{
+			uint8_t tx_preset = (raw & 0xF);
+			uint8_t tx_use_preset = ((raw >> 4) & 0x1);
+			uint8_t tx_fs= ((raw >> 5) & 0x3F);
+			uint8_t tx_lf= ((raw >> 11) & 0x3F);
+
+			printf("TX Equalization:\n");
+			printf("  Preset: %u\n", tx_preset);
+			printf("  Use preset: %s\n", tx_use_preset ? "Yes" : "No");
+			printf("  Full Swing (FS): %u\n", tx_fs);
+			printf("  Low Freq (LF): %u\n", tx_lf);
+
+                        break;
+		}
+
+                case NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9:
+		{
+			uint8_t rx_preset = (raw & 0xF);
+			uint8_t rx_use_preset = ((raw >> 4) & 0x1);
+			uint8_t rx_fs= ((raw >> 5) & 0x3F);
+			uint8_t rx_lf= ((raw >> 11) & 0x3F);
+
+			printf("RX Equalization:\n");
+			printf("  Preset: %u\n", rx_preset);
+			printf("  Use preset: %s\n", rx_use_preset ? "Yes" : "No");
+			printf("  Full Swing (FS): %u\n", rx_fs);
+			printf("  Low Freq (LF): %u\n", rx_lf);
+
+                        break;
+		}
+        }
+}
+
 void pretty_print(uint64_t mask)
 {
 	printf("=======================================\n");
@@ -642,7 +918,7 @@ void pretty_print(uint64_t mask)
 		if ((1ULL << i) & mask)
 		{
 			printf("Find NVIDIA GPU on /dev/i2c-%d\n", i);
-
+			printf("----------------SYS_INFO----------------\n");
 			printf("Marketing Name: ");
 			for (int j = 0; j < NV_MSGBOX_SYSID_DATA_SIZE_MARKETING_NAME_V1; j++) 
 			{
@@ -721,13 +997,23 @@ void pretty_print(uint64_t mask)
 			memcpy(&max_dram_capacity, gpu_info[k].max_dram_capacity, NV_MSGBOX_SYSID_DATA_SIZE_MAX_DRAM_CAPACITY_V1); // little endian
 			printf("Max DRAM Capacity: %d Mb\n", max_dram_capacity);
 
-
+			printf("----------------SENSORS-----------------\n");
 			printf("GPU Temp: %.1f C\n", pretty_temp(gpu_info[k].temp));
 
 			printf("GPU Power: %d W\n", pretty_power(gpu_info[k].power)); // kW to W*/
 
+			printf("--------------PCIE_LINK_INFO---------------\n");
+			
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0, gpu_info[k].pcie_link_info_0[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1, gpu_info[k].pcie_link_info_1[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2, gpu_info[k].pcie_link_info_2[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3, gpu_info[k].pcie_link_info_3[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4, gpu_info[k].pcie_link_info_4[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6, gpu_info[k].pcie_link_info_6[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8, gpu_info[k].pcie_link_info_8[0]);
+			print_pcie_link_info(NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9, gpu_info[k].pcie_link_info_9[0]);
 
-			k > 0 && printf("---------------------------------------\n");
+			k > 0 && printf("=======================================\n");
 			k++;
 		}
 	}
@@ -744,6 +1030,7 @@ int main()
 		return 0;
 	} 
 
+	// SYS_INFO
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_FIRMWARE_VER_V1);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_BOARD_PART_NUM_V1);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_SERIAL_NUM_V1);
@@ -762,8 +1049,19 @@ int main()
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_GPU_PART_NUM_V1);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA, NV_MSGBOX_CMD_ARG1_MAX_DRAM_CAPACITY_V1);
 
+	// SENSORS
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP, NV_MSGBOX_CMD_ARG1_NULL);
 	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_POWER, NV_MSGBOX_CMD_ARG1_NULL);
+
+	// PCIE_LINK_INFO
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_0);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_1);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_2);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_3);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_4);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_6);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_8);
+	cmd(nvidia_mask, NV_MSGBOX_CMD_OPCODE_GET_PCIE_LINK_INFO, NV_MSGBOX_CMD_ARG1_GET_PCIE_LINK_INFO_PAGE_9);
 
 	pretty_print(nvidia_mask);
 
