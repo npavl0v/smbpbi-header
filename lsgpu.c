@@ -96,8 +96,11 @@ int i2c_wr(const char* dev, uint8_t addr, uint8_t reg, uint8_t *value, uint8_t w
 	int ret = ioctl(fd, I2C_RDWR, &wr_data);
 	if (ret < 0)
 	{
+		close(fd);
 		return -1;
 	}
+
+	close(fd);
 	return 0;
 }
 
@@ -121,6 +124,7 @@ int i2c_wr_rd(const char* dev, uint8_t addr, uint8_t reg, uint8_t *value, uint8_
     
 	if (value != NULL && read_len > 128)
 	{
+		close(fd);
 		return -1;	
 	}
 
@@ -138,11 +142,13 @@ int i2c_wr_rd(const char* dev, uint8_t addr, uint8_t reg, uint8_t *value, uint8_
 	int ret = ioctl(fd, I2C_RDWR, &rdwr_data);
 	if (ret < 0)
 	{
+		close(fd);
 		return -1;
 	}
 
 	memcpy(value, read_buf, sizeof(read_buf));
 
+	close(fd);
 	return 0;
 }
 
@@ -170,9 +176,11 @@ int i2c_quick_command(const char* dev, uint8_t addr)
 	int ret = ioctl(fd, I2C_RDWR, &wr_data);
 	if (ret < 0)
 	{
+		close(fd);
 		return -1;
 	}
-
+		
+	close(fd);
 	return 0;
 }
 
@@ -235,6 +243,12 @@ uint64_t detect_nvidia_device()
 		{
 			continue;
 		}
+		
+		// skip physical busses
+		// detect only in mux channels
+		const int max_i2c_bus = 16;
+		if (i < max_i2c_bus)
+			continue;
 	
 		snprintf(bus, 32, "/dev/i2c-%d", i);
 	
@@ -323,11 +337,14 @@ void output_char(const char* prefix, const char* suffix, int do_pure, int do_raw
 void output_dec_num(const char* prefix, const char* suffix, int do_pure, int do_raw, int type_size)
 {
 	uint32_t* val = (uint32_t*) get_buf_ptr(0);
+
+	uint8_t* ptr = get_buf_ptr(0);
+
 	if (do_raw)
 	{
 		for (int i = 0; i < type_size; i++) 
 		{
-			printf("%x ", (uint8_t) val[i]);
+			printf("%x ", (uint8_t) ptr[i]);
 		}
 		printf("\n");
 		return;
@@ -368,13 +385,15 @@ void output_24i8f(const char* prefix, const char* suffix, int do_pure, int do_ra
 {
 	uint32_t* val = (uint32_t*) get_buf_ptr(0);
 
+	uint8_t* ptr = get_buf_ptr(0);
+
 	double d = convert_24i8f_to_double(*val);
 
 	if (do_raw)
 	{
 		for (int i = 0; i < type_size; i++) 
 		{
-			printf("%x ", (uint8_t) val[i]);
+			printf("%x ", (uint8_t) ptr[i]);
 		}
 		printf("\n");
 		return;
@@ -397,6 +416,21 @@ void output_bytes(const char* prefix, const char* suffix, int do_pure, int do_ra
 	for (int j = type_size - 1; j >= 0; j--) 
 	{
 		do_raw && printf("%x ", ptr[j]);
+		!do_raw && printf("%x", ptr[j]);
+	}
+	!do_pure && !do_raw && printf("%s \n", suffix);
+}
+
+void output_guid(const char* prefix, const char* suffix, int do_pure, int do_raw, int type_size)
+{
+	!do_pure && !do_raw && printf("%s", prefix);
+	uint8_t* ptr = get_buf_ptr(0);
+	!do_raw && printf("GPU-"); // in `nvidia-smi -q` format
+	for (int j = 0; j < type_size; j++) 
+	{
+		do_raw && printf("%x ", ptr[j]);
+		if (!do_raw && (j == 4 || j == 6 || j == 8 || j == 10))
+			printf("-");
 		!do_raw && printf("%x", ptr[j]);
 	}
 	!do_pure && !do_raw && printf("%s \n", suffix);
@@ -718,6 +752,10 @@ void print_sensors(uint8_t bus_id)
 	cmd(bus_id, cmd_data.opcode, cmd_data.arg1, cmd_data.type_size, get_buf_ptr(1));
 	(cmd_data.output)(cmd_data.prefix, cmd_data.suffix, 0, 0, cmd_data.type_size);
 
+	cmd_data = get_cmd_by_id("temp-mem");
+	cmd(bus_id, cmd_data.opcode, cmd_data.arg1, cmd_data.type_size, get_buf_ptr(1));
+	(cmd_data.output)(cmd_data.prefix, cmd_data.suffix, 0, 0, cmd_data.type_size);
+
 	cmd_data = get_cmd_by_id("power");
 	cmd(bus_id, cmd_data.opcode, cmd_data.arg1, cmd_data.type_size, get_buf_ptr(1));
 	(cmd_data.output)(cmd_data.prefix, cmd_data.suffix, 0, 0, cmd_data.type_size);
@@ -824,8 +862,8 @@ struct CmdData get_cmd_by_id(const char* cmd)
 		data.opcode = NV_MSGBOX_CMD_OPCODE_GET_SYS_ID_DATA;
 		data.arg1 = NV_MSGBOX_CMD_ARG1_GPU_GUID_V1;
 		data.type_size = NV_MSGBOX_SYSID_DATA_SIZE_GPU_GUID_V1;
-		data.output = output_bytes;
-		data.prefix = "GPU GUID: ";
+		data.output = output_guid;
+		data.prefix = "GPU UUID: ";
 		data.suffix = "";
 	}
 	else if (strcmp(cmd, "inforom-ver") == 0)
@@ -885,10 +923,19 @@ struct CmdData get_cmd_by_id(const char* cmd)
 	else if (strcmp(cmd, "temp") == 0)
 	{
 		data.opcode = NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP;
-		data.arg1 = NV_MSGBOX_CMD_ARG1_NULL;
-		data.type_size = NV_MSGBOX_SYSID_DATA_SIZE_MAX_DRAM_CAPACITY_V1;
+		data.arg1 = NV_MSGBOX_CMD_ARG1_TEMP_GPU_0;
+		data.type_size = DWORD_SZ;
 		data.output = output_24i8f;
-		data.prefix = "Temperature: ";
+		data.prefix = "GPU Temperature: ";
+		data.suffix = " C";
+	}
+	else if (strcmp(cmd, "temp-mem") == 0)
+	{
+		data.opcode = NV_MSGBOX_CMD_OPCODE_GET_EXT_TEMP;
+		data.arg1 = NV_MSGBOX_CMD_ARG1_TEMP_MEMORY;
+		data.type_size = DWORD_SZ;
+		data.output = output_24i8f;
+		data.prefix = "Memory Temperature: ";
 		data.suffix = " C";
 	}
 	else if (strcmp(cmd, "power") == 0)
@@ -972,6 +1019,15 @@ struct CmdData get_cmd_by_id(const char* cmd)
 		data.prefix = "";
 		data.suffix = "";
 	}
+	else if (strcmp(cmd, "driver-ver") == 0)
+	{
+		data.opcode = NV_MSGBOX_CMD_OPCODE_DYNAMIC_SYSTEM_INFORMATION;
+		data.arg1 = NV_MSGBOX_CMD_ARG1_NULL;
+		data.type_size = DWORD_SZ * 2;
+		data.output = output_char;
+		data.prefix = "Driver version: ";
+		data.suffix = "";
+	}
 
 	return data;
 }
@@ -998,7 +1054,7 @@ int main(int argc, char* argv[])
 	int do_sensors = 0;
 
 	int do_cmd = 0;
-	char cmd_str[16] = {};
+	char cmd_str[32] = {};
 	int do_raw = 0;
 
 	int ord = 0;
@@ -1127,7 +1183,7 @@ void usage(const char *progname)
 	printf("SysInfo commands\n");
 	printf("  vbios-ver                 Read VBIOS version\n");
 	printf("  board-pn                  Board part number\n");
-	printf("  sn                 	    Serial Number\n");
+	printf("  sn                	    Serial Number\n");
 	printf("  marketing-name            Marketing name\n");
 	printf("  gpu-pn                    GPU part number\n");
 	printf("  build-date                VBIOS fw build date\n");
@@ -1143,7 +1199,8 @@ void usage(const char *progname)
 	printf("  fru-pn                    FRU part number\n");
 	printf("  max-dram-capacity         Max DRAM capacity\n");
 	printf("Sensor commands\n");
-	printf("  temperature               GPU temperature\n");
+	printf("  temp    		    GPU temperature\n");
+	printf("  temp-mem                  Memory temperature\n");
 	printf("  power         	    GPU power\n");
 	printf("PCIe link info commands\n");
 	printf("  pcie-link-info0           Link speed/width, error counters\n");
@@ -1154,6 +1211,9 @@ void usage(const char *progname)
 	printf("  pcie-link-info6           LTSSM current state\n");
 	printf("  pcie-link-info8           TX equalization\n");
 	printf("  pcie-link-info9           RX equalization\n");
+	printf("Driver version\n");
+	printf("  driver-ver           	    Driver version\n");
+	printf("PCIe link info commands\n");
 	printf("Examples:\n");
 	printf("  %s --detect\n", progname);
 	printf("  %s --detect --pure\n", progname);
